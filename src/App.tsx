@@ -1,122 +1,74 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useRef, useState } from 'react';
+import { analyzeCode, type AgentResult } from './api/agent';
+import { FloatingOrbs } from './components/FloatingOrbs';
+import { FloatingParticles } from './components/FloatingParticles';
+import { Header } from './components/Header';
+import { CodeEditor, type CodeEditorHandle } from './components/CodeEditor';
+import { Loader } from './components/Loader';
+import { ScoreDisplay } from './components/ScoreDisplay';
+import { IssuesList } from './components/IssuesList';
+import { SuggestionBox } from './components/SuggestionBox';
 
-function App() {
-  const [count, setCount] = useState(0)
+type UiState = 'idle' | 'loading' | 'results' | 'error';
+
+export default function App() {
+  const [code, setCode]       = useState('');
+  const [uiState, setUiState] = useState<UiState>('idle');
+  const [result, setResult]   = useState<AgentResult | null>(null);
+  const [error, setError]     = useState('');
+  const editorRef = useRef<CodeEditorHandle>(null);
+
+  async function handleAnalyze() {
+    if (!code.trim()) {
+      editorRef.current?.shake();
+      return;
+    }
+    setUiState('loading');
+    setError('');
+    try {
+      const data = await analyzeCode(code);
+      setResult(data);
+      setUiState('results');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Błąd połączenia z serwerem');
+      setUiState('error');
+    }
+  }
 
   return (
     <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+      <FloatingOrbs />
+      <FloatingParticles />
 
-      <div className="ticks"></div>
+      <div className="container">
+        <Header />
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+        <CodeEditor ref={editorRef} value={code} onChange={setCode} />
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
+        {uiState === 'error' && (
+          <div className="error-box">⚠ {error}</div>
+        )}
+
+        <div className="btn-wrap">
+          <button
+            className="btn-analyze"
+            onClick={handleAnalyze}
+            disabled={uiState === 'loading'}
+          >
+            ⚡ Analizuj kod
+          </button>
+        </div>
+
+        {uiState === 'loading' && <Loader />}
+
+        {uiState === 'results' && result && (
+          <>
+            <ScoreDisplay score={result.score} grade={result.grade} />
+            <IssuesList issues={result.issues} />
+            <SuggestionBox text={result.suggestion} />
+          </>
+        )}
+      </div>
     </>
-  )
+  );
 }
-
-export default App
