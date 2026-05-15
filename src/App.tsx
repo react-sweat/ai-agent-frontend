@@ -12,30 +12,34 @@ import { java } from '@codemirror/lang-java'
 import { cpp } from '@codemirror/lang-cpp'
 import { marked } from 'marked'
 import type { Extension } from '@codemirror/state'
+import codelMLogo from './assets/CodeLM-logo-white.png'
+import heroImg from './assets/hero.png'
 import './App.css'
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface AnalysisResult {
   score: number
   grade: 'A' | 'B' | 'C' | 'D' | 'F'
   issues: string[]
   suggestion: string
+  syntaxCount: number
+  smellCount: number
+  securityCount: number
 }
 
-// ── Language config ───────────────────────────────────────────────────────────
+type BackendStatus = 'checking' | 'online' | 'offline'
+type IssueFilter   = 'all' | 'security' | 'syntax' | 'quality'
 
 const LANGUAGES = [
-  { id: 'typescript', label: 'TypeScript', dot: '#3178C6' },
-  { id: 'javascript', label: 'JavaScript', dot: '#F7DF1E' },
-  { id: 'python',     label: 'Python',     dot: '#3776AB' },
-  { id: 'html',       label: 'HTML',       dot: '#E44D26' },
-  { id: 'css',        label: 'CSS',        dot: '#264DE4' },
-  { id: 'json',       label: 'JSON',       dot: '#8BC34A' },
-  { id: 'sql',        label: 'SQL',        dot: '#E38C00' },
-  { id: 'rust',       label: 'Rust',       dot: '#CE422B' },
-  { id: 'java',       label: 'Java',       dot: '#007396' },
-  { id: 'cpp',        label: 'C++',        dot: '#00599C' },
+  { id: 'typescript', label: 'TypeScript', dot: '#3178C6', ext: 'ts'   },
+  { id: 'javascript', label: 'JavaScript', dot: '#F7DF1E', ext: 'js'   },
+  { id: 'python',     label: 'Python',     dot: '#3776AB', ext: 'py'   },
+  { id: 'html',       label: 'HTML',       dot: '#E44D26', ext: 'html' },
+  { id: 'css',        label: 'CSS',        dot: '#264DE4', ext: 'css'  },
+  { id: 'json',       label: 'JSON',       dot: '#8BC34A', ext: 'json' },
+  { id: 'sql',        label: 'SQL',        dot: '#E38C00', ext: 'sql'  },
+  { id: 'rust',       label: 'Rust',       dot: '#CE422B', ext: 'rs'   },
+  { id: 'java',       label: 'Java',       dot: '#007396', ext: 'java' },
+  { id: 'cpp',        label: 'C++',        dot: '#00599C', ext: 'cpp'  },
 ] as const
 
 type LangId = typeof LANGUAGES[number]['id']
@@ -55,15 +59,20 @@ function getLangExtension(id: LangId): Extension {
   }
 }
 
-// ── Grade config ──────────────────────────────────────────────────────────────
-
 const GRADE_CONFIG = {
-  A: { color: '#34D399', glow: 'rgba(52,211,153,0.4)',  bg: 'rgba(52,211,153,0.1)',  label: 'Excellent' },
-  B: { color: '#22D3EE', glow: 'rgba(34,211,238,0.4)',  bg: 'rgba(34,211,238,0.1)',  label: 'Good'      },
-  C: { color: '#FBBF24', glow: 'rgba(251,191,36,0.4)',  bg: 'rgba(251,191,36,0.1)',  label: 'Fair'      },
-  D: { color: '#FB923C', glow: 'rgba(251,146,60,0.4)',  bg: 'rgba(251,146,60,0.1)',  label: 'Poor'      },
-  F: { color: '#F87171', glow: 'rgba(248,113,113,0.4)', bg: 'rgba(248,113,113,0.1)', label: 'Critical'  },
+  A: { color: '#34D399', glow: 'rgba(52,211,153,0.3)',  bg: 'rgba(52,211,153,0.07)',  label: 'Excellent' },
+  B: { color: '#22D3EE', glow: 'rgba(34,211,238,0.3)',  bg: 'rgba(34,211,238,0.07)',  label: 'Good'      },
+  C: { color: '#FBBF24', glow: 'rgba(251,191,36,0.3)',  bg: 'rgba(251,191,36,0.07)',  label: 'Fair'      },
+  D: { color: '#FB923C', glow: 'rgba(251,146,60,0.3)',  bg: 'rgba(251,146,60,0.07)',  label: 'Poor'      },
+  F: { color: '#F87171', glow: 'rgba(248,113,113,0.3)', bg: 'rgba(248,113,113,0.07)', label: 'Critical'  },
 } as const
+
+const ANALYSIS_STEPS = [
+  'Running syntax analysis',
+  'Detecting code smells',
+  'Auditing security',
+  'Generating report',
+]
 
 const CIRCUMFERENCE = 2 * Math.PI * 52
 
@@ -73,48 +82,101 @@ function renderMd(text: string): string {
   return typeof r === 'string' ? r : String(r)
 }
 
-// ── Icons ─────────────────────────────────────────────────────────────────────
+function classifyIssue(text: string): IssueFilter {
+  const t = text.toLowerCase()
+  if (
+    t.includes('eval') || t.includes('xss') || t.includes('inject') ||
+    t.includes('credential') || t.includes('prototype') ||
+    t.includes('hardcoded') || t.includes('http://') || t.includes('innerhtml') ||
+    t.includes('document.write') || t.includes('math.random') || t.includes('settimeout') ||
+    t.includes('exec(')
+  ) return 'security'
+  if (
+    t.includes('bracket') || t.includes('unclosed') ||
+    t.includes('unmatched') || t.includes('syntax') || t.includes('semicolon')
+  ) return 'syntax'
+  return 'quality'
+}
 
-function IconCode() {
+function issueColor(cls: IssueFilter): string {
+  if (cls === 'security') return '#F87171'
+  if (cls === 'syntax')   return '#FBBF24'
+  return '#64748B'
+}
+
+function IconShield() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     </svg>
   )
 }
-function IconShield() {
-  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
-}
+
 function IconWarn() {
-  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
-}
-function IconBug() {
-  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M4.93 4.93l4.24 4.24M14.83 14.83l4.24 4.24M4.93 19.07l4.24-4.24M14.83 9.17l4.24-4.24" /></svg>
-}
-function IconSparkle() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v3M12 18v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M3 12h3M18 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12" /></svg>
-}
-function IconLoader() {
-  return <svg className="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 12a9 9 0 11-6.219-8.56" /></svg>
-}
-function IconClear() {
-  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  )
 }
 
-function issueIcon(text: string) {
-  const t = text.toLowerCase()
-  if (t.includes('eval') || t.includes('xss') || t.includes('inject') || t.includes('credential') || t.includes('prototype') || t.includes('hardcoded')) return <IconShield />
-  if (t.includes('bracket') || t.includes('unclosed') || t.includes('unmatched') || t.includes('syntax')) return <IconBug />
+function IconBug() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M4.93 4.93l4.24 4.24M14.83 14.83l4.24 4.24M4.93 19.07l4.24-4.24M14.83 9.17l4.24-4.24" />
+    </svg>
+  )
+}
+
+function IconSparkle() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v3M12 18v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M3 12h3M18 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12" />
+    </svg>
+  )
+}
+
+function IconLoader() {
+  return (
+    <svg className="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <path d="M21 12a9 9 0 11-6.219-8.56" />
+    </svg>
+  )
+}
+
+function IconX() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  )
+}
+
+function IconCheck() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  )
+}
+
+function IconCopy() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+    </svg>
+  )
+}
+
+function issueIcon(cls: IssueFilter) {
+  if (cls === 'security') return <IconShield />
+  if (cls === 'syntax')   return <IconBug />
   return <IconWarn />
 }
-function issueColor(text: string) {
-  const t = text.toLowerCase()
-  if (t.includes('eval') || t.includes('xss') || t.includes('inject') || t.includes('credential') || t.includes('prototype') || t.includes('hardcoded')) return '#F87171'
-  if (t.includes('bracket') || t.includes('unclosed') || t.includes('unmatched')) return '#FBBF24'
-  return '#94A3B8'
-}
-
-// ── Score Ring ────────────────────────────────────────────────────────────────
 
 function ScoreRing({ score, grade }: { score: number; grade: string }) {
   const [offset, setOffset] = useState(CIRCUMFERENCE)
@@ -122,32 +184,38 @@ function ScoreRing({ score, grade }: { score: number; grade: string }) {
   const cfg = GRADE_CONFIG[grade as keyof typeof GRADE_CONFIG] ?? GRADE_CONFIG.F
 
   useEffect(() => {
-    const t1 = setTimeout(() => setOffset(CIRCUMFERENCE * (1 - score / 100)), 100)
+    const t1 = setTimeout(() => setOffset(CIRCUMFERENCE * (1 - score / 100)), 120)
     let start: number | null = null
     const tick = (ts: number) => {
       if (!start) start = ts
-      const p = Math.min((ts - start) / 1200, 1)
+      const p = Math.min((ts - start) / 1100, 1)
       setDisplay(Math.round((1 - Math.pow(1 - p, 3)) * score))
       if (p < 1) requestAnimationFrame(tick)
     }
-    const t2 = setTimeout(() => requestAnimationFrame(tick), 100)
+    const t2 = setTimeout(() => requestAnimationFrame(tick), 120)
     return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [score])
 
   return (
     <div className="score-ring-wrap">
-      <svg width="140" height="140" viewBox="0 0 120 120" overflow="visible">
+      <svg width="128" height="128" viewBox="0 0 120 120" overflow="visible">
         <defs>
-          <filter id="rg" x="-60%" y="-60%" width="220%" height="220%">
-            <feGaussianBlur stdDeviation="4" result="b" />
+          <filter id="glow-ring" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="b" />
             <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
         </defs>
-        <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="7" />
-        <circle cx="60" cy="60" r="52" fill="none" stroke={cfg.color} strokeWidth="7"
-          strokeLinecap="round" strokeDasharray={CIRCUMFERENCE} strokeDashoffset={offset}
-          transform="rotate(-90 60 60)" filter="url(#rg)"
-          style={{ transition: 'stroke-dashoffset 1.3s cubic-bezier(0.34,1.2,0.64,1)' }} />
+        <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.045)" strokeWidth="6" />
+        <circle
+          cx="60" cy="60" r="52"
+          fill="none" stroke={cfg.color} strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={CIRCUMFERENCE}
+          strokeDashoffset={offset}
+          transform="rotate(-90 60 60)"
+          filter="url(#glow-ring)"
+          style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(0.34,1.2,0.64,1)' }}
+        />
       </svg>
       <div className="score-ring-center">
         <span className="score-number" style={{ color: cfg.color }}>{display}</span>
@@ -157,71 +225,235 @@ function ScoreRing({ score, grade }: { score: number; grade: string }) {
   )
 }
 
-// ── Empty / Loading states ────────────────────────────────────────────────────
+function ScoreBreakdown({ syntaxCount, smellCount, securityCount }: {
+  syntaxCount: number
+  smellCount: number
+  securityCount: number
+}) {
+  const total = syntaxCount + smellCount + securityCount
+
+  const rows = [
+    {
+      label: 'Security',
+      count: securityCount,
+      icon: <IconShield />,
+      okColor: '#34D399',
+      badColor: '#F87171',
+      health: Math.max(0, 100 - Math.min(securityCount * 25, 100)),
+    },
+    {
+      label: 'Syntax',
+      count: syntaxCount,
+      icon: <IconBug />,
+      okColor: '#34D399',
+      badColor: '#FBBF24',
+      health: Math.max(0, 100 - Math.min(syntaxCount * 20, 100)),
+    },
+    {
+      label: 'Quality',
+      count: smellCount,
+      icon: <IconWarn />,
+      okColor: '#34D399',
+      badColor: '#94A3B8',
+      health: Math.max(0, 100 - Math.min(smellCount * 12, 100)),
+    },
+  ]
+
+  if (total === 0) {
+    return (
+      <div className="breakdown-clean">
+        <span className="breakdown-clean-icon"><IconCheck /></span>
+        <span>All checks passed — no issues detected</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="score-breakdown">
+      {rows.map((row, i) => {
+        const color = row.count === 0 ? row.okColor : row.badColor
+        return (
+          <div key={row.label} className="bd-row fade-in" style={{ animationDelay: `${i * 60}ms` }}>
+            <span className="bd-icon" style={{ color }}>{row.icon}</span>
+            <span className="bd-label">{row.label}</span>
+            <div className="bd-track">
+              <div
+                className="bd-fill"
+                style={{ width: `${row.health}%`, background: color }}
+              />
+            </div>
+            <span className="bd-count" style={{ color: row.count > 0 ? color : '#1E293B' }}>
+              {row.count}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 function EmptyState() {
   return (
     <div className="empty-state">
-      <div className="empty-icon"><IconCode /></div>
-      <p className="empty-title">Paste your code on the left</p>
-      <p className="empty-desc">CodeLM runs syntax analysis, detects code smells, audits security, then gives you a detailed Markdown report.</p>
-      <div className="empty-tags">
-        {['Syntax Analysis', 'Code Smells', 'Security Audit', 'Quality Score'].map(t => (
-          <span key={t} className="tag">{t}</span>
-        ))}
+      <img src={heroImg} alt="" className="empty-hero" aria-hidden="true" />
+      <div className="empty-body">
+        <h3 className="empty-title">Ready to review</h3>
+        <p className="empty-desc">Paste code in the editor, pick a language, and run the analysis.</p>
+        <div className="empty-pipeline">
+          {[
+            { num: '1', label: 'Paste code', sub: 'Any language supported' },
+            { num: '2', label: 'Select language', sub: 'For accurate highlighting' },
+            { num: '3', label: 'Run analysis', sub: 'Ctrl+Enter or Analyze' },
+          ].map((step, i) => (
+            <div key={i} className="ep-step">
+              <div className="ep-num">{step.num}</div>
+              <div className="ep-text">
+                <strong>{step.label}</strong>
+                <span>{step.sub}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="empty-chips">
+          {['Syntax', 'Smells', 'Security', 'Score', 'Language Check'].map(t => (
+            <span key={t} className="chip">{t}</span>
+          ))}
+        </div>
       </div>
     </div>
   )
 }
 
-function LoadingSkeleton() {
+function LoadingState({ step }: { step: number }) {
   return (
     <div className="loading-state">
-      <div className="thinking-ring">
-        <svg width="72" height="72" viewBox="0 0 80 80">
-          <circle cx="40" cy="40" r="30" fill="none" stroke="rgba(129,140,248,0.12)" strokeWidth="5" />
-          <circle cx="40" cy="40" r="30" fill="none" stroke="#818CF8" strokeWidth="5"
-            strokeLinecap="round" strokeDasharray="50 140" transform="rotate(-90 40 40)"
-            className="thinking-arc" />
-        </svg>
-        <div className="thinking-icon" style={{ color: '#818CF8' }}><IconSparkle /></div>
-      </div>
-      <p className="thinking-label">CodeLM is thinking<span className="dots"><span>.</span><span>.</span><span>.</span></span></p>
-      <div className="skeleton-lines">
-        {[70, 50, 85, 40, 65].map((w, i) => (
-          <div key={i} className="skel" style={{ width: `${w}%`, animationDelay: `${i * 120}ms` }} />
+      <div className="steps-track">
+        {ANALYSIS_STEPS.map((label, i) => (
+          <div key={i} className={`step-row ${i < step ? 'done' : i === step ? 'active' : 'pending'}`}>
+            <div className="step-indicator">
+              {i < step
+                ? <span className="step-check"><IconCheck /></span>
+                : i === step
+                  ? <IconLoader />
+                  : <span className="step-dot" />
+              }
+            </div>
+            <span className="step-label">{label}</span>
+          </div>
         ))}
       </div>
     </div>
   )
 }
 
-// ── Results Panel ─────────────────────────────────────────────────────────────
-
-function ResultsPanel({ result }: { result: AnalysisResult }) {
+function ResultsPanel({
+  result,
+  langLabel,
+}: {
+  result: AnalysisResult
+  langLabel: string
+}) {
   const cfg = GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F
+  const [filter, setFilter] = useState<IssueFilter>('all')
+  const mdRef = useRef<HTMLDivElement>(null)
+
+  const classified = result.issues.map(text => ({ text, cls: classifyIssue(text) }))
+  const secCount  = classified.filter(i => i.cls === 'security').length
+  const synCount  = classified.filter(i => i.cls === 'syntax').length
+  const qualCount = classified.filter(i => i.cls === 'quality').length
+  const visible   = filter === 'all' ? classified : classified.filter(i => i.cls === filter)
+
+  useEffect(() => {
+    const el = mdRef.current
+    if (!el) return
+    el.querySelectorAll('pre').forEach(pre => {
+      if (pre.querySelector('.copy-btn')) return
+      const btn = document.createElement('button')
+      btn.textContent = 'Copy'
+      btn.className = 'copy-btn'
+      btn.onclick = () => {
+        void navigator.clipboard.writeText(pre.querySelector('code')?.textContent ?? '')
+        btn.textContent = '✓ Copied'
+        btn.classList.add('copied')
+        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied') }, 2000)
+      }
+      pre.appendChild(btn)
+    })
+  }, [result.suggestion])
+
   return (
     <div className="results fade-in">
-      <div className="score-row">
-        <ScoreRing score={result.score} grade={result.grade} />
-        <div className="grade-block">
-          <div className="grade-badge" style={{ color: cfg.color, background: cfg.bg, boxShadow: `0 0 28px ${cfg.glow}` }}>
-            {result.grade}
+      <div className="score-card">
+        <div className="score-left">
+          <ScoreRing score={result.score} grade={result.grade} />
+        </div>
+        <div className="score-right">
+          <div className="grade-row">
+            <span
+              className="grade-badge"
+              style={{ color: cfg.color, background: cfg.bg, boxShadow: `0 0 20px ${cfg.glow}` }}
+            >
+              {result.grade}
+            </span>
+            <div className="grade-info">
+              <span className="grade-label" style={{ color: cfg.color }}>{cfg.label}</span>
+              <span className="grade-sub">{result.issues.length} issue{result.issues.length !== 1 ? 's' : ''} · {langLabel}</span>
+            </div>
           </div>
-          <span className="grade-label" style={{ color: cfg.color }}>{cfg.label}</span>
-          <span className="grade-sub">{result.issues.length} issue{result.issues.length !== 1 ? 's' : ''} detected</span>
+          <ScoreBreakdown
+            syntaxCount={result.syntaxCount}
+            smellCount={result.smellCount}
+            securityCount={result.securityCount}
+          />
         </div>
       </div>
 
       {result.issues.length > 0 && (
         <div className="issues-section">
-          <h3 className="section-title">Issues Detected</h3>
+          <div className="issues-header">
+            <span className="section-label">Issues</span>
+            <div className="filter-bar">
+              {([
+                { key: 'all'      as IssueFilter, label: 'All',      count: result.issues.length },
+                { key: 'security' as IssueFilter, label: 'Security', count: secCount,  cls: 'sec'  },
+                { key: 'syntax'   as IssueFilter, label: 'Syntax',   count: synCount,  cls: 'syn'  },
+                { key: 'quality'  as IssueFilter, label: 'Quality',  count: qualCount, cls: 'qual' },
+              ] as Array<{ key: IssueFilter; label: string; count: number; cls?: string }>)
+                .filter(f => f.count > 0 || f.key === 'all')
+                .map(f => (
+                  <button
+                    key={f.key}
+                    className={`filter-btn ${f.cls ?? ''} ${filter === f.key ? 'active' : ''}`}
+                    onClick={() => setFilter(f.key)}
+                  >
+                    {f.label}
+                    <span className="filter-count">{f.count}</span>
+                  </button>
+                ))
+              }
+            </div>
+          </div>
           <ul className="issues-list">
-            {result.issues.map((issue, i) => (
-              <li key={i} className="issue-item stagger-in"
-                style={{ animationDelay: `${i * 55}ms`, borderColor: `${issueColor(issue)}20` }}>
-                <span className="issue-icon" style={{ color: issueColor(issue) }}>{issueIcon(issue)}</span>
-                <span style={{ color: issueColor(issue) === '#94A3B8' ? '#CBD5E1' : issueColor(issue) }}>{issue}</span>
+            {visible.map((issue, i) => (
+              <li
+                key={`${issue.cls}-${i}`}
+                className="issue-item stagger-in"
+                style={{ animationDelay: `${i * 35}ms` }}
+              >
+                <span className="issue-icon" style={{ color: issueColor(issue.cls) }}>
+                  {issueIcon(issue.cls)}
+                </span>
+                <span className="issue-text">{issue.text}</span>
+                <span
+                  className="issue-tag"
+                  style={{
+                    color: issueColor(issue.cls),
+                    borderColor: `${issueColor(issue.cls)}28`,
+                    background: `${issueColor(issue.cls)}0d`,
+                  }}
+                >
+                  {issue.cls}
+                </span>
               </li>
             ))}
           </ul>
@@ -229,16 +461,18 @@ function ResultsPanel({ result }: { result: AnalysisResult }) {
       )}
 
       {result.suggestion && (
-        <div className="suggestion-section">
-          <h3 className="section-title"><IconSparkle /> AI Review</h3>
-          <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMd(result.suggestion) }} />
+        <div className="report-section">
+          <span className="section-label"><IconSparkle /> Report</span>
+          <div
+            className="markdown-body"
+            ref={mdRef}
+            dangerouslySetInnerHTML={{ __html: renderMd(result.suggestion) }}
+          />
         </div>
       )}
     </div>
   )
 }
-
-// ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [code, setCode]         = useState('')
@@ -246,14 +480,30 @@ export default function App() {
   const [loading, setLoading]   = useState(false)
   const [result, setResult]     = useState<AnalysisResult | null>(null)
   const [error, setError]       = useState<string | null>(null)
-  const errorTimer              = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [status, setStatus]     = useState<BackendStatus>('checking')
+  const [step, setStep]         = useState(0)
+  const [reportCopied, setReportCopied] = useState(false)
+  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const activeLang = LANGUAGES.find(l => l.id === lang)!
+
+  useEffect(() => {
+    fetch('/api/agent/ping', { method: 'POST' })
+      .then(r => setStatus(r.ok ? 'online' : 'offline'))
+      .catch(() => setStatus('offline'))
+  }, [])
+
+  useEffect(() => {
+    if (!loading) { setStep(0); return }
+    setStep(0)
+    const id = setInterval(() => setStep(s => Math.min(s + 1, ANALYSIS_STEPS.length - 1)), 2200)
+    return () => clearInterval(id)
+  }, [loading])
 
   const showError = useCallback((msg: string) => {
     setError(msg)
     if (errorTimer.current) clearTimeout(errorTimer.current)
-    errorTimer.current = setTimeout(() => setError(null), 5000)
+    errorTimer.current = setTimeout(() => setError(null), 6000)
   }, [])
 
   const analyze = useCallback(async () => {
@@ -265,7 +515,7 @@ export default function App() {
       const res = await fetch('/api/agent/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, language: lang }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string }
@@ -277,7 +527,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [code, loading, showError])
+  }, [code, lang, loading, showError])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -287,56 +537,71 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [analyze])
 
-  const lines = code ? code.split('\n').length : 0
+  const copyReport = useCallback(() => {
+    if (!result?.suggestion) return
+    void navigator.clipboard.writeText(result.suggestion)
+    setReportCopied(true)
+    setTimeout(() => setReportCopied(false), 2200)
+  }, [result])
+
+  const lines   = code ? code.split('\n').length : 0
+  const kbSize  = new TextEncoder().encode(code).length / 1024
 
   return (
     <div className="app">
-      {/* Header */}
+      {loading && <div className="top-bar" />}
+
       <header className="header">
         <div className="header-left">
-          <div className="logo">
-            <span className="logo-icon"><IconCode /></span>
-            <span className="logo-text">Code<span className="logo-accent">LM</span></span>
-          </div>
-          <span className="logo-badge">AI Code Reviewer</span>
+          <img src={codelMLogo} alt="CodeLM" className="logo-img" />
+          <span className={`status-pill ${status}`}>
+            <span className="status-dot-inner" />
+            {status === 'online' ? 'Connected' : status === 'offline' ? 'Offline' : 'Connecting'}
+          </span>
         </div>
-        <span className="kbd-hint"><kbd>Ctrl</kbd><kbd>↵</kbd> to analyze</span>
+        <div className="header-right">
+          <span className="kbd-hint">
+            <kbd>Ctrl</kbd><kbd>↵</kbd>
+            <span className="kbd-label">Analyze</span>
+          </span>
+        </div>
       </header>
 
       <main className="main-grid">
-        {/* Editor Panel */}
         <section className="editor-panel glass-card">
           <div className="panel-header">
-            {/* Language select */}
-            <div className="lang-select-wrap">
-              <span className="lang-dot" style={{ background: activeLang.dot }} />
-              <select
-                className="lang-select"
-                value={lang}
-                onChange={e => setLang(e.target.value as LangId)}
-                aria-label="Select language"
-              >
-                {LANGUAGES.map(l => (
-                  <option key={l.id} value={l.id}>{l.label}</option>
-                ))}
-              </select>
-              <svg className="select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9" /></svg>
+            <div className="file-tab">
+              <span className="file-dot" style={{ background: activeLang.dot }} />
+              <span className="file-name">untitled.{activeLang.ext}</span>
             </div>
-
-            <div className="editor-meta">
+            <div className="panel-header-right">
+              <div className="lang-select-wrap">
+                <select
+                  className="lang-select"
+                  value={lang}
+                  onChange={e => { setLang(e.target.value as LangId); setResult(null) }}
+                  aria-label="Select language"
+                >
+                  {LANGUAGES.map(l => (
+                    <option key={l.id} value={l.id}>{l.label}</option>
+                  ))}
+                </select>
+                <svg className="select-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </div>
               {lines > 0 && (
-                <>
+                <div className="editor-meta">
                   <span className="meta-pill">{lines} ln</span>
-                  <span className="meta-pill">{code.length} ch</span>
-                  <button className="clear-btn" onClick={() => { setCode(''); setResult(null) }} title="Clear">
-                    <IconClear />
+                  <span className="meta-pill">{kbSize.toFixed(1)} KB</span>
+                  <button className="clear-btn" onClick={() => { setCode(''); setResult(null) }} title="Clear editor">
+                    <IconX />
                   </button>
-                </>
+                </div>
               )}
             </div>
           </div>
 
-          {/* CodeMirror editor */}
           <div className="editor-body">
             <CodeMirror
               value={code}
@@ -355,7 +620,7 @@ export default function App() {
                 autocompletion: false,
                 foldGutter: false,
               }}
-              placeholder={`// Paste your ${activeLang.label} code here…`}
+              placeholder={`Paste your ${activeLang.label} here…`}
               aria-label="Code input"
               className="cm-outer"
             />
@@ -368,39 +633,64 @@ export default function App() {
               disabled={loading || !code.trim()}
               aria-busy={loading}
             >
-              {loading ? <><IconLoader /> Analyzing…</> : <><IconSparkle /> Analyze Code</>}
+              <span className="btn-shimmer" />
+              {loading
+                ? <><IconLoader /><span>Analyzing…</span></>
+                : <><IconSparkle /><span>Analyze</span></>
+              }
             </button>
             {result && !loading && (
-              <span className="footer-hint" style={{ color: (GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).color }}>
-                Score <strong>{result.score}/100</strong> · {(GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).label}
+              <span className="footer-score" style={{ color: (GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).color }}>
+                <strong>{result.score}</strong>/100 · {(GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).label}
               </span>
             )}
           </div>
         </section>
 
-        {/* Results Panel */}
         <section className="results-panel glass-card">
           <div className="panel-header">
-            <span className="panel-title">Analysis Report</span>
-            {result && (
-              <span className="panel-badge">
-                Grade <strong style={{ color: (GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).color }}>{result.grade}</strong>
-              </span>
-            )}
+            <div className="file-tab">
+              <span className="panel-title-text">Analysis Report</span>
+            </div>
+            <div className="panel-header-right">
+              {result && !loading && (
+                <>
+                  <button
+                    className={`copy-report-btn ${reportCopied ? 'copied' : ''}`}
+                    onClick={copyReport}
+                    title="Copy report markdown"
+                  >
+                    {reportCopied ? <><IconCheck /> Copied</> : <><IconCopy /> Copy</>}
+                  </button>
+                  <span
+                    className="report-badge"
+                    style={{
+                      color: (GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).color,
+                      borderColor: `${(GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).color}28`,
+                      background: (GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).bg,
+                    }}
+                  >
+                    Grade {result.grade}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
           <div className="results-body">
-            {loading  && <LoadingSkeleton />}
+            {loading   && <LoadingState step={step} />}
             {!loading && !result && <EmptyState />}
-            {!loading && result  && <ResultsPanel result={result} />}
+            {!loading && result  && <ResultsPanel result={result} langLabel={activeLang.label} />}
           </div>
         </section>
       </main>
 
       {error && (
         <div className="error-toast" role="alert" aria-live="assertive">
-          <span style={{ color: '#F87171', flexShrink: 0 }}><IconWarn /></span>
-          {error}
-          <button className="toast-close" onClick={() => setError(null)} aria-label="Dismiss"><IconClear /></button>
+          <span className="toast-icon"><IconWarn /></span>
+          <span>{error}</span>
+          <button className="toast-close" onClick={() => setError(null)} aria-label="Dismiss">
+            <IconX />
+          </button>
         </div>
       )}
     </div>
