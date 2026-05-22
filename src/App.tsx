@@ -26,6 +26,15 @@ interface AnalysisResult {
   securityCount: number
 }
 
+interface FixResult {
+  fixedCode: string
+  score: number
+  grade: 'A' | 'B' | 'C' | 'D' | 'F'
+  iterations: number
+  verificationNotes: string
+  issuesRemaining: number
+}
+
 type BackendStatus = 'checking' | 'online' | 'offline'
 type IssueFilter   = 'all' | 'security' | 'syntax' | 'quality'
 
@@ -72,6 +81,12 @@ const ANALYSIS_STEPS = [
   'Detecting code smells',
   'Auditing security',
   'Generating report',
+]
+
+const FIX_STEPS = [
+  'Analyzing issues',
+  'Generating fix',
+  'Verifying result',
 ]
 
 const CIRCUMFERENCE = 2 * Math.PI * 52
@@ -474,6 +489,62 @@ function ResultsPanel({
   )
 }
 
+function FixVerifyPanel({ fix, fixLoading, fixStep }: { fix: FixResult | null; fixLoading: boolean; fixStep: number }) {
+  if (fixLoading) {
+    return (
+      <div className="fix-loading-state">
+        <div className="fix-loading-steps">
+          {FIX_STEPS.map((label, i) => (
+            <div key={i} className={`fix-loading-step ${i < fixStep ? 'done' : i === fixStep ? 'active' : ''}`}>
+              {i < fixStep
+                ? <span className="step-check"><IconCheck /></span>
+                : i === fixStep
+                  ? <IconLoader />
+                  : <span className="step-dot" />
+              }
+              <span>{label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+  if (!fix) return null
+  const cfg = GRADE_CONFIG[fix.grade] ?? GRADE_CONFIG.F
+  return (
+    <div className="fix-verify-body">
+      <div className="fix-verify-card">
+        <div className="score-left">
+          <ScoreRing score={fix.score} grade={fix.grade} />
+        </div>
+        <div className="score-right">
+          <div className="grade-row">
+            <span className="grade-badge" style={{ color: cfg.color, background: cfg.bg, boxShadow: `0 0 20px ${cfg.glow}` }}>
+              {fix.grade}
+            </span>
+            <div className="grade-info">
+              <span className="grade-label" style={{ color: cfg.color }}>{cfg.label}</span>
+              <span className="grade-sub">
+                {fix.iterations === 1 ? 'Fixed in 1 iteration' : `Fixed in ${fix.iterations} iterations`}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="fix-notes">
+        <span className="section-label"><IconSparkle /> Verification</span>
+        <div className="fix-notes-text">{fix.verificationNotes}</div>
+        <div className={`fix-remaining ${fix.issuesRemaining === 0 ? 'clean' : 'issues'}`}>
+          {fix.issuesRemaining === 0
+            ? <><IconCheck /> All issues resolved</>
+            : <><IconWarn /> {fix.issuesRemaining} issue{fix.issuesRemaining !== 1 ? 's' : ''} remaining</>
+          }
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [code, setCode]         = useState('')
   const [lang, setLang]         = useState<LangId>('typescript')
@@ -483,6 +554,9 @@ export default function App() {
   const [status, setStatus]     = useState<BackendStatus>('checking')
   const [step, setStep]         = useState(0)
   const [reportCopied, setReportCopied] = useState(false)
+  const [fixResult, setFixResult]     = useState<FixResult | null>(null)
+  const [fixLoading, setFixLoading]   = useState(false)
+  const [fixStep, setFixStep]         = useState(0)
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const activeLang = LANGUAGES.find(l => l.id === lang)!
@@ -499,6 +573,13 @@ export default function App() {
     const id = setInterval(() => setStep(s => Math.min(s + 1, ANALYSIS_STEPS.length - 1)), 2200)
     return () => clearInterval(id)
   }, [loading])
+
+  useEffect(() => {
+    if (!fixLoading) { setFixStep(0); return }
+    setFixStep(0)
+    const id = setInterval(() => setFixStep(s => Math.min(s + 1, FIX_STEPS.length - 1)), 4000)
+    return () => clearInterval(id)
+  }, [fixLoading])
 
   const showError = useCallback((msg: string) => {
     setError(msg)
@@ -537,6 +618,28 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [analyze])
 
+  const fixCode = useCallback(async () => {
+    if (!code.trim() || fixLoading) return
+    setFixLoading(true)
+    setFixResult(null)
+    try {
+      const res = await fetch('/api/agent/fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, language: lang }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error ?? `Server error ${res.status}`)
+      }
+      setFixResult(await res.json() as FixResult)
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Fix failed — check backend')
+    } finally {
+      setFixLoading(false)
+    }
+  }, [code, lang, fixLoading, showError])
+
   const copyReport = useCallback(() => {
     if (!result?.suggestion) return
     void navigator.clipboard.writeText(result.suggestion)
@@ -548,8 +651,8 @@ export default function App() {
   const kbSize  = new TextEncoder().encode(code).length / 1024
 
   return (
-    <div className="app">
-      {loading && <div className="top-bar" />}
+    <div className={`app${fixResult || fixLoading ? ' fix-open' : ''}`}>
+      {(loading || fixLoading) && <div className="top-bar" />}
 
       <header className="header">
         <div className="header-left">
@@ -594,7 +697,7 @@ export default function App() {
                 <div className="editor-meta">
                   <span className="meta-pill">{lines} ln</span>
                   <span className="meta-pill">{kbSize.toFixed(1)} KB</span>
-                  <button className="clear-btn" onClick={() => { setCode(''); setResult(null) }} title="Clear editor">
+                  <button className="clear-btn" onClick={() => { setCode(''); setResult(null); setFixResult(null) }} title="Clear editor">
                     <IconX />
                   </button>
                 </div>
@@ -605,7 +708,7 @@ export default function App() {
           <div className="editor-body">
             <CodeMirror
               value={code}
-              onChange={setCode}
+              onChange={(v) => { setCode(v); setFixResult(null) }}
               theme={vscodeDark}
               extensions={[getLangExtension(lang)]}
               height="100%"
@@ -630,7 +733,7 @@ export default function App() {
             <button
               className={`analyze-btn ${loading ? 'loading' : ''}`}
               onClick={() => void analyze()}
-              disabled={loading || !code.trim()}
+              disabled={loading || fixLoading || !code.trim()}
               aria-busy={loading}
             >
               <span className="btn-shimmer" />
@@ -638,6 +741,15 @@ export default function App() {
                 ? <><IconLoader /><span>Analyzing…</span></>
                 : <><IconSparkle /><span>Analyze</span></>
               }
+            </button>
+            <button
+              className={`fix-btn ${fixLoading ? 'loading' : ''}`}
+              onClick={() => void fixCode()}
+              disabled={loading || fixLoading || !code.trim()}
+              aria-busy={fixLoading}
+              title="Auto-fix issues and verify with LangGraph"
+            >
+              {fixLoading ? <><IconLoader /><span>Fixing…</span></> : <><IconCheck /><span>Fix & Verify</span></>}
             </button>
             {result && !loading && (
               <span className="footer-score" style={{ color: (GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).color }}>
@@ -683,6 +795,67 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      {(fixResult || fixLoading) && (
+        <section className="fix-section">
+          <div className="fix-section-label">
+            <IconSparkle /> Fix &amp; Verify Pipeline
+            {fixResult && (
+              <span className="fix-iter-badge">
+                {fixResult.iterations}/{3} iteration{fixResult.iterations !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          <div className="fix-grid">
+            <div className="fix-editor-panel glass-card">
+              <div className="panel-header">
+                <div className="file-tab">
+                  <span className="file-dot" style={{ background: '#34D399' }} />
+                  <span className="file-name">fixed.{(LANGUAGES.find(l => l.id === lang) ?? LANGUAGES[0]).ext}</span>
+                </div>
+                <div className="panel-header-right">
+                  {fixResult && (
+                    <span className="meta-pill" style={{ color: '#34D399', borderColor: 'rgba(52,211,153,0.2)' }}>read-only</span>
+                  )}
+                </div>
+              </div>
+              <div className="editor-body">
+                <CodeMirror
+                  value={fixResult?.fixedCode ?? ''}
+                  theme={vscodeDark}
+                  extensions={[getLangExtension(lang)]}
+                  height="100%"
+                  editable={false}
+                  basicSetup={{ lineNumbers: true, syntaxHighlighting: true, foldGutter: false }}
+                  className="cm-outer cm-readonly"
+                />
+              </div>
+            </div>
+            <div className="fix-verify-panel glass-card">
+              <div className="panel-header">
+                <div className="file-tab">
+                  <span className="panel-title-text">Verification</span>
+                </div>
+                {fixResult && (
+                  <div className="panel-header-right">
+                    <span
+                      className="report-badge"
+                      style={{
+                        color: (GRADE_CONFIG[fixResult.grade] ?? GRADE_CONFIG.F).color,
+                        borderColor: `${(GRADE_CONFIG[fixResult.grade] ?? GRADE_CONFIG.F).color}28`,
+                        background: (GRADE_CONFIG[fixResult.grade] ?? GRADE_CONFIG.F).bg,
+                      }}
+                    >
+                      Grade {fixResult.grade}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <FixVerifyPanel fix={fixResult} fixLoading={fixLoading} fixStep={fixStep} />
+            </div>
+          </div>
+        </section>
+      )}
 
       {error && (
         <div className="error-toast" role="alert" aria-live="assertive">
