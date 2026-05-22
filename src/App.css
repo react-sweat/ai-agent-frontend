@@ -1297,6 +1297,16 @@ kbd {
 
 .cm-readonly .cm-cursor { display: none !important; }
 
+/* ── Clickable logo ────────────────────────────────────────────── */
+.logo-clickable {
+  cursor: pointer;
+  transition: opacity 0.15s, filter 0.15s;
+}
+.logo-clickable:hover {
+  opacity: 0.8;
+  filter: drop-shadow(0 0 12px rgba(129,140,248,0.45));
+}
+
 /* ── Header auth controls ──────────────────────────────────────── */
 .user-name-pill {
   font-size: 11.5px;
@@ -1591,3 +1601,33 @@ kbd {
 .hist-chip.syn { color: #FBBF24; background: rgba(251,191,36,0.06); border-color: rgba(251,191,36,0.18); }
 .hist-chip.qua { color: #64748B; background: rgba(100,116,139,0.06); border-color: rgba(100,116,139,0.18); }
 .hist-chip.rw  { color: #34D399; background: rgba(52,211,153,0.06); border-color: rgba(52,211,153,0.18); }
+
+/* ── Hist preview footer + open button ────────────────────────── */
+.hist-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hist-open-btn {
+  flex-shrink: 0;
+  padding: 5px 14px;
+  border-radius: 7px;
+  border: 1px solid rgba(129,140,248,0.28);
+  background: rgba(79,70,229,0.1);
+  color: #818CF8;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.hist-open-btn:hover {
+  background: rgba(79,70,229,0.22);
+  border-color: rgba(129,140,248,0.5);
+  color: #A5B4FC;
+}

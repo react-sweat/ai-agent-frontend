@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import CodeMirror from '@uiw/react-codemirror'
 import { vscodeDark } from '@uiw/codemirror-theme-vscode'
@@ -56,6 +57,29 @@ interface HistoryEntry {
   improved_grade: string | null
   code_preview:  string
   created_at:    string
+}
+
+/** Full row returned by GET /history/:id */
+interface HistoryEntryDetail {
+  id:                       string
+  code:                     string
+  language:                 string
+  score:                    number
+  grade:                    string
+  issue_count:              number
+  suggestion:               string | null
+  syntax_count:             number
+  smell_count:              number
+  security_count:           number
+  analysis_type:            'analyze' | 'rewrite'
+  issues:                   string[] | null
+  rewritten_code:           string | null
+  improved_score:           number | null
+  improved_grade:           string | null
+  improved_issues:          string[] | null
+  improved_syntax_count:    number | null
+  improved_smell_count:     number | null
+  improved_security_count:  number | null
 }
 
 type BackendStatus = 'checking' | 'online' | 'offline'
@@ -637,11 +661,12 @@ function timeAgo(iso: string): string {
 }
 
 function HistoryModal({
-  entries, loading, onClose,
+  entries, loading, onClose, onOpen,
 }: {
-  entries: HistoryEntry[]
-  loading: boolean
-  onClose: () => void
+  entries:  HistoryEntry[]
+  loading:  boolean
+  onClose:  () => void
+  onOpen:   (id: string) => void
 }) {
   const [expanded, setExpanded] = useState<string | null>(null)
 
@@ -727,15 +752,21 @@ function HistoryModal({
                 {isOpen && (
                   <div className="hist-preview" onClick={e => e.stopPropagation()}>
                     <pre className="hist-code">{entry.code_preview}{entry.code_preview.length >= 300 ? '\n…' : ''}</pre>
-                    <div className="hist-chips">
-                      <span className="hist-chip sec">🛡 {entry.security_count} security</span>
-                      <span className="hist-chip syn">⚠ {entry.syntax_count} syntax</span>
-                      <span className="hist-chip qua">🔎 {entry.smell_count} quality</span>
-                      {entry.analysis_type === 'rewrite' && entry.improved_grade && (
-                        <span className="hist-chip rw">
-                          {entry.grade} → {entry.improved_grade}
-                        </span>
-                      )}
+                    <div className="hist-preview-footer">
+                      <div className="hist-chips">
+                        <span className="hist-chip sec">🛡 {entry.security_count} security</span>
+                        <span className="hist-chip syn">⚠ {entry.syntax_count} syntax</span>
+                        <span className="hist-chip qua">🔎 {entry.smell_count} quality</span>
+                        {entry.analysis_type === 'rewrite' && entry.improved_grade && (
+                          <span className="hist-chip rw">{entry.grade} → {entry.improved_grade}</span>
+                        )}
+                      </div>
+                      <button
+                        className="hist-open-btn"
+                        onClick={() => onOpen(entry.id)}
+                      >
+                        Open →
+                      </button>
                     </div>
                   </div>
                 )}
@@ -751,6 +782,8 @@ function HistoryModal({
 
 export default function App() {
   const { user, token, logout } = useAuth()
+  const navigate                = useNavigate()
+  const { chatId }              = useParams<{ chatId: string }>()
 
   const [code, setCode]               = useState('')
   const [lang, setLang]               = useState<LangId>('typescript')
@@ -762,6 +795,7 @@ export default function App() {
   const [status, setStatus]           = useState<BackendStatus>('checking')
   const [step, setStep]               = useState(0)
   const [reportCopied, setReportCopied] = useState(false)
+  const [restoringChat, setRestoringChat] = useState(false)
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // History panel state
@@ -769,13 +803,70 @@ export default function App() {
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
 
+  // ── Restore chat from URL /chat/:chatId ───────────────────────
+  useEffect(() => {
+    if (!chatId || !token) return
+    setRestoringChat(true)
+    setResult(null)
+    setRewriteResult(null)
+    setError(null)
+
+    fetch(`/api/history/${chatId}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('Not found')))
+      .then((data: { entry: HistoryEntryDetail }) => {
+        const e = data.entry
+        const langId = (LANGUAGES.find(l => l.id === e.language)?.id ?? 'typescript') as LangId
+        setCode(e.code)
+        setLang(langId)
+
+        if (e.analysis_type === 'analyze') {
+          setResult({
+            score:         e.score,
+            grade:         e.grade as AnalysisResult['grade'],
+            issues:        e.issues ?? [],
+            suggestion:    e.suggestion ?? '',
+            syntaxCount:   e.syntax_count,
+            smellCount:    e.smell_count,
+            securityCount: e.security_count,
+          })
+          setRewriteResult(null)
+        } else {
+          setRewriteResult({
+            original: {
+              score:         e.score,
+              grade:         e.grade as AnalysisResult['grade'],
+              issues:        e.issues ?? [],
+              suggestion:    e.suggestion ?? '',
+              syntaxCount:   e.syntax_count,
+              smellCount:    e.smell_count,
+              securityCount: e.security_count,
+            },
+            rewrittenCode: e.rewritten_code ?? '',
+            improved: {
+              score:         e.improved_score ?? e.score,
+              grade:         (e.improved_grade ?? e.grade) as ImprovementSummary['grade'],
+              issues:        e.improved_issues ?? [],
+              syntaxCount:   e.improved_syntax_count ?? 0,
+              smellCount:    e.improved_smell_count ?? 0,
+              securityCount: e.improved_security_count ?? 0,
+            },
+          })
+          setResult(null)
+        }
+      })
+      .catch(() => {
+        setError('Could not load this analysis — it may have been deleted.')
+        navigate('/', { replace: true })
+      })
+      .finally(() => setRestoringChat(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, token])
+
   const fetchHistory = useCallback(async () => {
     if (!token) return
     setHistoryLoading(true)
     try {
-      const res = await fetch('/api/history', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await fetch('/api/history', { headers: { Authorization: `Bearer ${token}` } })
       if (res.ok) {
         const data = await res.json() as { history: HistoryEntry[] }
         setHistoryEntries(data.history)
@@ -789,6 +880,15 @@ export default function App() {
     setShowHistory(true)
     void fetchHistory()
   }, [fetchHistory])
+
+  // ── Logo → home ───────────────────────────────────────────────
+  const goHome = useCallback(() => {
+    setCode('')
+    setResult(null)
+    setRewriteResult(null)
+    setError(null)
+    navigate('/')
+  }, [navigate])
 
   const activeLang = LANGUAGES.find(l => l.id === lang)!
   const activeSteps = loadingMode === 'rewrite' ? REWRITE_STEPS : ANALYSIS_STEPS
@@ -832,13 +932,16 @@ export default function App() {
         const body = await res.json().catch(() => ({})) as { error?: string }
         throw new Error(body.error ?? `Server error ${res.status}`)
       }
-      setResult(await res.json() as AnalysisResult)
+      const data = await res.json() as AnalysisResult & { analysisId?: string | null }
+      const { analysisId, ...analysisResult } = data
+      setResult(analysisResult)
+      if (analysisId) navigate(`/chat/${analysisId}`)
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Unexpected error — is the backend running on :3000?')
     } finally {
       setLoading(false)
     }
-  }, [code, lang, loading, token, showError])
+  }, [code, lang, loading, token, navigate, showError])
 
   const analyzeAndRewrite = useCallback(async () => {
     if (!code.trim() || loading) return
@@ -859,13 +962,16 @@ export default function App() {
         const body = await res.json().catch(() => ({})) as { error?: string }
         throw new Error(body.error ?? `Server error ${res.status}`)
       }
-      setRewriteResult(await res.json() as RewriteResult)
+      const data = await res.json() as RewriteResult & { analysisId?: string | null }
+      const { analysisId, ...rewriteData } = data
+      setRewriteResult(rewriteData)
+      if (analysisId) navigate(`/chat/${analysisId}`)
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Unexpected error — is the backend running on :3000?')
     } finally {
       setLoading(false)
     }
-  }, [code, lang, loading, token, showError])
+  }, [code, lang, loading, token, navigate, showError])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -895,7 +1001,7 @@ export default function App() {
 
       <header className="header">
         <div className="header-left">
-          <img src={codelMLogo} alt="CodeLM" className="logo-img" />
+          <img src={codelMLogo} alt="CodeLM" className="logo-img logo-clickable" onClick={goHome} title="Back to home" />
           <span className={`status-pill ${status}`}>
             <span className="status-dot-inner" />
             {status === 'online' ? 'Connected' : status === 'offline' ? 'Offline' : 'Connecting'}
@@ -926,6 +1032,10 @@ export default function App() {
           entries={historyEntries}
           loading={historyLoading}
           onClose={() => setShowHistory(false)}
+          onOpen={(id) => {
+            setShowHistory(false)
+            navigate(`/chat/${id}`)
+          }}
         />
       )}
 
@@ -992,7 +1102,7 @@ export default function App() {
             <button
               className={`analyze-btn ${loading && loadingMode === 'analyze' ? 'loading' : ''}`}
               onClick={() => void analyze()}
-              disabled={loading || !code.trim()}
+              disabled={loading || restoringChat || !code.trim()}
               aria-busy={loading && loadingMode === 'analyze'}
               title="Ctrl+Enter"
             >
@@ -1006,7 +1116,7 @@ export default function App() {
             <button
               className={`rewrite-btn ${loading && loadingMode === 'rewrite' ? 'loading' : ''}`}
               onClick={() => void analyzeAndRewrite()}
-              disabled={loading || !code.trim()}
+              disabled={loading || restoringChat || !code.trim()}
               aria-busy={loading && loadingMode === 'rewrite'}
               title="Analyze, rewrite, and verify"
             >
@@ -1069,10 +1179,18 @@ export default function App() {
             </div>
           </div>
           <div className="results-body">
-            {loading     && <LoadingState steps={activeSteps} step={step} />}
-            {!loading && !result && !rewriteResult && <EmptyState />}
-            {!loading && result      && <ResultsPanel result={result} langLabel={activeLang.label} />}
-            {!loading && rewriteResult && <RewriteResultsPanel result={rewriteResult} lang={lang} langLabel={activeLang.label} />}
+            {restoringChat && (
+              <div className="loading-state">
+                <div className="steps-track" style={{ alignItems: 'center', gap: 12 }}>
+                  <IconLoader />
+                  <span className="step-label" style={{ color: '#94A3B8' }}>Loading analysis…</span>
+                </div>
+              </div>
+            )}
+            {loading     && !restoringChat && <LoadingState steps={activeSteps} step={step} />}
+            {!loading && !restoringChat && !result && !rewriteResult && <EmptyState />}
+            {!loading && !restoringChat && result      && <ResultsPanel result={result} langLabel={activeLang.label} />}
+            {!loading && !restoringChat && rewriteResult && <RewriteResultsPanel result={rewriteResult} lang={lang} langLabel={activeLang.label} />}
           </div>
         </section>
       </main>

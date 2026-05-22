@@ -1,3 +1,4 @@
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import App      from './App'
 import AuthPage from './pages/AuthPage'
@@ -22,7 +23,16 @@ function Loader() {
 
 export default function Root() {
   const { user, loading } = useAuth()
+
   if (loading) return <Loader />
-  if (!user)   return <AuthPage />
-  return <App />
+
+  if (!user) return <AuthPage />
+
+  return (
+    <Routes>
+      <Route path="/"              element={<App />} />
+      <Route path="/chat/:chatId"  element={<App />} />
+      <Route path="*"              element={<Navigate to="/" replace />} />
+    </Routes>
+  )
 }
