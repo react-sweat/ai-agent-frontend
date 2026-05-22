@@ -26,6 +26,21 @@ interface AnalysisResult {
   securityCount: number
 }
 
+interface ImprovementSummary {
+  score: number
+  grade: 'A' | 'B' | 'C' | 'D' | 'F'
+  issues: string[]
+  syntaxCount: number
+  smellCount: number
+  securityCount: number
+}
+
+interface RewriteResult {
+  original: AnalysisResult
+  rewrittenCode: string
+  improved: ImprovementSummary
+}
+
 type BackendStatus = 'checking' | 'online' | 'offline'
 type IssueFilter   = 'all' | 'security' | 'syntax' | 'quality'
 
@@ -74,7 +89,14 @@ const ANALYSIS_STEPS = [
   'Generating report',
 ]
 
-const CIRCUMFERENCE = 2 * Math.PI * 52
+const REWRITE_STEPS = [
+  'Running syntax analysis',
+  'Detecting code smells',
+  'Auditing security',
+  'Generating review',
+  'Rewriting code',
+  'Verifying improvements',
+]
 
 marked.use({ breaks: true, gfm: true })
 function renderMd(text: string): string {
@@ -172,19 +194,29 @@ function IconCopy() {
   )
 }
 
+function IconWand() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8L19 13M17.8 6.2L19 5M3 21l9-9M12.2 6.2L11 5" />
+    </svg>
+  )
+}
+
 function issueIcon(cls: IssueFilter) {
   if (cls === 'security') return <IconShield />
   if (cls === 'syntax')   return <IconBug />
   return <IconWarn />
 }
 
-function ScoreRing({ score, grade }: { score: number; grade: string }) {
-  const [offset, setOffset] = useState(CIRCUMFERENCE)
+function ScoreRing({ score, grade, size = 128 }: { score: number; grade: string; size?: number }) {
+  const r = size === 128 ? 52 : 32
+  const circumference = 2 * Math.PI * r
+  const [offset, setOffset] = useState(circumference)
   const [display, setDisplay] = useState(0)
   const cfg = GRADE_CONFIG[grade as keyof typeof GRADE_CONFIG] ?? GRADE_CONFIG.F
 
   useEffect(() => {
-    const t1 = setTimeout(() => setOffset(CIRCUMFERENCE * (1 - score / 100)), 120)
+    const t1 = setTimeout(() => setOffset(circumference * (1 - score / 100)), 120)
     let start: number | null = null
     const tick = (ts: number) => {
       if (!start) start = ts
@@ -194,32 +226,36 @@ function ScoreRing({ score, grade }: { score: number; grade: string }) {
     }
     const t2 = setTimeout(() => requestAnimationFrame(tick), 120)
     return () => { clearTimeout(t1); clearTimeout(t2) }
-  }, [score])
+  }, [score, circumference])
+
+  const cx = size / 2
+  const cy = size / 2
+  const sw = size === 128 ? 6 : 4
 
   return (
-    <div className="score-ring-wrap">
-      <svg width="128" height="128" viewBox="0 0 120 120" overflow="visible">
+    <div className="score-ring-wrap" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} overflow="visible">
         <defs>
-          <filter id="glow-ring" x="-50%" y="-50%" width="200%" height="200%">
+          <filter id={`glow-ring-${size}`} x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="3" result="b" />
             <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
         </defs>
-        <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.045)" strokeWidth="6" />
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.045)" strokeWidth={sw} />
         <circle
-          cx="60" cy="60" r="52"
-          fill="none" stroke={cfg.color} strokeWidth="6"
+          cx={cx} cy={cy} r={r}
+          fill="none" stroke={cfg.color} strokeWidth={sw}
           strokeLinecap="round"
-          strokeDasharray={CIRCUMFERENCE}
+          strokeDasharray={circumference}
           strokeDashoffset={offset}
-          transform="rotate(-90 60 60)"
-          filter="url(#glow-ring)"
+          transform={`rotate(-90 ${cx} ${cy})`}
+          filter={`url(#glow-ring-${size})`}
           style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(0.34,1.2,0.64,1)' }}
         />
       </svg>
       <div className="score-ring-center">
-        <span className="score-number" style={{ color: cfg.color }}>{display}</span>
-        <span className="score-sub">/100</span>
+        <span className="score-number" style={{ color: cfg.color, fontSize: size === 128 ? 30 : 18 }}>{display}</span>
+        {size === 128 && <span className="score-sub">/100</span>}
       </div>
     </div>
   )
@@ -233,30 +269,9 @@ function ScoreBreakdown({ syntaxCount, smellCount, securityCount }: {
   const total = syntaxCount + smellCount + securityCount
 
   const rows = [
-    {
-      label: 'Security',
-      count: securityCount,
-      icon: <IconShield />,
-      okColor: '#34D399',
-      badColor: '#F87171',
-      health: Math.max(0, 100 - Math.min(securityCount * 25, 100)),
-    },
-    {
-      label: 'Syntax',
-      count: syntaxCount,
-      icon: <IconBug />,
-      okColor: '#34D399',
-      badColor: '#FBBF24',
-      health: Math.max(0, 100 - Math.min(syntaxCount * 20, 100)),
-    },
-    {
-      label: 'Quality',
-      count: smellCount,
-      icon: <IconWarn />,
-      okColor: '#34D399',
-      badColor: '#94A3B8',
-      health: Math.max(0, 100 - Math.min(smellCount * 12, 100)),
-    },
+    { label: 'Security', count: securityCount, icon: <IconShield />, okColor: '#34D399', badColor: '#F87171', health: Math.max(0, 100 - Math.min(securityCount * 25, 100)) },
+    { label: 'Syntax',   count: syntaxCount,   icon: <IconBug />,    okColor: '#34D399', badColor: '#FBBF24', health: Math.max(0, 100 - Math.min(syntaxCount * 20, 100))   },
+    { label: 'Quality',  count: smellCount,    icon: <IconWarn />,   okColor: '#34D399', badColor: '#94A3B8', health: Math.max(0, 100 - Math.min(smellCount * 12, 100))    },
   ]
 
   if (total === 0) {
@@ -277,14 +292,9 @@ function ScoreBreakdown({ syntaxCount, smellCount, securityCount }: {
             <span className="bd-icon" style={{ color }}>{row.icon}</span>
             <span className="bd-label">{row.label}</span>
             <div className="bd-track">
-              <div
-                className="bd-fill"
-                style={{ width: `${row.health}%`, background: color }}
-              />
+              <div className="bd-fill" style={{ width: `${row.health}%`, background: color }} />
             </div>
-            <span className="bd-count" style={{ color: row.count > 0 ? color : '#1E293B' }}>
-              {row.count}
-            </span>
+            <span className="bd-count" style={{ color: row.count > 0 ? color : '#1E293B' }}>{row.count}</span>
           </div>
         )
       })}
@@ -301,9 +311,9 @@ function EmptyState() {
         <p className="empty-desc">Paste code in the editor, pick a language, and run the analysis.</p>
         <div className="empty-pipeline">
           {[
-            { num: '1', label: 'Paste code', sub: 'Any language supported' },
-            { num: '2', label: 'Select language', sub: 'For accurate highlighting' },
-            { num: '3', label: 'Run analysis', sub: 'Ctrl+Enter or Analyze' },
+            { num: '1', label: 'Paste code',      sub: 'Any language supported'        },
+            { num: '2', label: 'Select language',  sub: 'For accurate highlighting'     },
+            { num: '3', label: 'Analyze or Rewrite', sub: 'Ctrl+Enter to analyze only' },
           ].map((step, i) => (
             <div key={i} className="ep-step">
               <div className="ep-num">{step.num}</div>
@@ -315,7 +325,7 @@ function EmptyState() {
           ))}
         </div>
         <div className="empty-chips">
-          {['Syntax', 'Smells', 'Security', 'Score', 'Language Check'].map(t => (
+          {['Syntax', 'Smells', 'Security', 'Score', 'AI Rewrite', 'Verify'].map(t => (
             <span key={t} className="chip">{t}</span>
           ))}
         </div>
@@ -324,11 +334,11 @@ function EmptyState() {
   )
 }
 
-function LoadingState({ step }: { step: number }) {
+function LoadingState({ steps, step }: { steps: string[]; step: number }) {
   return (
     <div className="loading-state">
       <div className="steps-track">
-        {ANALYSIS_STEPS.map((label, i) => (
+        {steps.map((label, i) => (
           <div key={i} className={`step-row ${i < step ? 'done' : i === step ? 'active' : 'pending'}`}>
             <div className="step-indicator">
               {i < step
@@ -346,22 +356,63 @@ function LoadingState({ step }: { step: number }) {
   )
 }
 
-function ResultsPanel({
-  result,
-  langLabel,
-}: {
-  result: AnalysisResult
-  langLabel: string
-}) {
-  const cfg = GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F
+function IssueList({ issues }: { issues: string[] }) {
   const [filter, setFilter] = useState<IssueFilter>('all')
-  const mdRef = useRef<HTMLDivElement>(null)
-
-  const classified = result.issues.map(text => ({ text, cls: classifyIssue(text) }))
+  const classified = issues.map(text => ({ text, cls: classifyIssue(text) }))
   const secCount  = classified.filter(i => i.cls === 'security').length
   const synCount  = classified.filter(i => i.cls === 'syntax').length
   const qualCount = classified.filter(i => i.cls === 'quality').length
   const visible   = filter === 'all' ? classified : classified.filter(i => i.cls === filter)
+
+  if (issues.length === 0) return null
+
+  return (
+    <div className="issues-section">
+      <div className="issues-header">
+        <span className="section-label">Issues</span>
+        <div className="filter-bar">
+          {([
+            { key: 'all'      as IssueFilter, label: 'All',      count: issues.length },
+            { key: 'security' as IssueFilter, label: 'Security', count: secCount,  cls: 'sec'  },
+            { key: 'syntax'   as IssueFilter, label: 'Syntax',   count: synCount,  cls: 'syn'  },
+            { key: 'quality'  as IssueFilter, label: 'Quality',  count: qualCount, cls: 'qual' },
+          ] as Array<{ key: IssueFilter; label: string; count: number; cls?: string }>)
+            .filter(f => f.count > 0 || f.key === 'all')
+            .map(f => (
+              <button
+                key={f.key}
+                className={`filter-btn ${f.cls ?? ''} ${filter === f.key ? 'active' : ''}`}
+                onClick={() => setFilter(f.key)}
+              >
+                {f.label}
+                <span className="filter-count">{f.count}</span>
+              </button>
+            ))
+          }
+        </div>
+      </div>
+      <ul className="issues-list">
+        {visible.map((issue, i) => (
+          <li
+            key={`${issue.cls}-${i}`}
+            className="issue-item stagger-in"
+            style={{ animationDelay: `${i * 35}ms` }}
+          >
+            <span className="issue-icon" style={{ color: issueColor(issue.cls) }}>{issueIcon(issue.cls)}</span>
+            <span className="issue-text">{issue.text}</span>
+            <span className="issue-tag" style={{ color: issueColor(issue.cls), borderColor: `${issueColor(issue.cls)}28`, background: `${issueColor(issue.cls)}0d` }}>
+              {issue.cls}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function ResultsPanel({ result, langLabel }: { result: AnalysisResult; langLabel: string }) {
+  const cfg = GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F
+  const mdRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = mdRef.current
@@ -389,10 +440,7 @@ function ResultsPanel({
         </div>
         <div className="score-right">
           <div className="grade-row">
-            <span
-              className="grade-badge"
-              style={{ color: cfg.color, background: cfg.bg, boxShadow: `0 0 20px ${cfg.glow}` }}
-            >
+            <span className="grade-badge" style={{ color: cfg.color, background: cfg.bg, boxShadow: `0 0 20px ${cfg.glow}` }}>
               {result.grade}
             </span>
             <div className="grade-info">
@@ -400,74 +448,145 @@ function ResultsPanel({
               <span className="grade-sub">{result.issues.length} issue{result.issues.length !== 1 ? 's' : ''} · {langLabel}</span>
             </div>
           </div>
-          <ScoreBreakdown
-            syntaxCount={result.syntaxCount}
-            smellCount={result.smellCount}
-            securityCount={result.securityCount}
-          />
+          <ScoreBreakdown syntaxCount={result.syntaxCount} smellCount={result.smellCount} securityCount={result.securityCount} />
         </div>
       </div>
 
-      {result.issues.length > 0 && (
-        <div className="issues-section">
-          <div className="issues-header">
-            <span className="section-label">Issues</span>
-            <div className="filter-bar">
-              {([
-                { key: 'all'      as IssueFilter, label: 'All',      count: result.issues.length },
-                { key: 'security' as IssueFilter, label: 'Security', count: secCount,  cls: 'sec'  },
-                { key: 'syntax'   as IssueFilter, label: 'Syntax',   count: synCount,  cls: 'syn'  },
-                { key: 'quality'  as IssueFilter, label: 'Quality',  count: qualCount, cls: 'qual' },
-              ] as Array<{ key: IssueFilter; label: string; count: number; cls?: string }>)
-                .filter(f => f.count > 0 || f.key === 'all')
-                .map(f => (
-                  <button
-                    key={f.key}
-                    className={`filter-btn ${f.cls ?? ''} ${filter === f.key ? 'active' : ''}`}
-                    onClick={() => setFilter(f.key)}
-                  >
-                    {f.label}
-                    <span className="filter-count">{f.count}</span>
-                  </button>
-                ))
-              }
-            </div>
-          </div>
-          <ul className="issues-list">
-            {visible.map((issue, i) => (
-              <li
-                key={`${issue.cls}-${i}`}
-                className="issue-item stagger-in"
-                style={{ animationDelay: `${i * 35}ms` }}
-              >
-                <span className="issue-icon" style={{ color: issueColor(issue.cls) }}>
-                  {issueIcon(issue.cls)}
-                </span>
-                <span className="issue-text">{issue.text}</span>
-                <span
-                  className="issue-tag"
-                  style={{
-                    color: issueColor(issue.cls),
-                    borderColor: `${issueColor(issue.cls)}28`,
-                    background: `${issueColor(issue.cls)}0d`,
-                  }}
-                >
-                  {issue.cls}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <IssueList issues={result.issues} />
 
       {result.suggestion && (
         <div className="report-section">
           <span className="section-label"><IconSparkle /> Report</span>
-          <div
-            className="markdown-body"
-            ref={mdRef}
-            dangerouslySetInnerHTML={{ __html: renderMd(result.suggestion) }}
+          <div className="markdown-body" ref={mdRef} dangerouslySetInnerHTML={{ __html: renderMd(result.suggestion) }} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RewriteResultsPanel({ result, lang }: { result: RewriteResult; lang: LangId; langLabel: string }) {
+  const [codeCopied, setCodeCopied] = useState(false)
+  const mdRef = useRef<HTMLDivElement>(null)
+  const delta = result.improved.score - result.original.score
+  const origCfg = GRADE_CONFIG[result.original.grade] ?? GRADE_CONFIG.F
+  const impCfg  = GRADE_CONFIG[result.improved.grade] ?? GRADE_CONFIG.F
+
+  useEffect(() => {
+    const el = mdRef.current
+    if (!el) return
+    el.querySelectorAll('pre').forEach(pre => {
+      if (pre.querySelector('.copy-btn')) return
+      const btn = document.createElement('button')
+      btn.textContent = 'Copy'
+      btn.className = 'copy-btn'
+      btn.onclick = () => {
+        void navigator.clipboard.writeText(pre.querySelector('code')?.textContent ?? '')
+        btn.textContent = '✓ Copied'
+        btn.classList.add('copied')
+        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied') }, 2000)
+      }
+      pre.appendChild(btn)
+    })
+  }, [result.original.suggestion])
+
+  const copyCode = () => {
+    void navigator.clipboard.writeText(result.rewrittenCode)
+    setCodeCopied(true)
+    setTimeout(() => setCodeCopied(false), 2200)
+  }
+
+  return (
+    <div className="results fade-in">
+      {/* Score comparison */}
+      <div className="score-compare-card">
+        <div className="score-compare-side">
+          <span className="score-compare-label">Before</span>
+          <ScoreRing score={result.original.score} grade={result.original.grade} size={80} />
+          <span className="score-compare-grade" style={{ color: origCfg.color }}>{result.original.grade}</span>
+          <span className="score-compare-sub" style={{ color: origCfg.color }}>{result.original.score}/100</span>
+        </div>
+
+        <div className="score-compare-arrow">
+          <div className={`score-delta ${delta >= 0 ? 'positive' : 'negative'}`}>
+            {delta >= 0 ? '+' : ''}{delta}
+          </div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#334155" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12" />
+            <polyline points="12 5 19 12 12 19" />
+          </svg>
+        </div>
+
+        <div className="score-compare-side">
+          <span className="score-compare-label">After</span>
+          <ScoreRing score={result.improved.score} grade={result.improved.grade} size={80} />
+          <span className="score-compare-grade" style={{ color: impCfg.color }}>{result.improved.grade}</span>
+          <span className="score-compare-sub" style={{ color: impCfg.color }}>{result.improved.score}/100</span>
+        </div>
+      </div>
+
+      {/* Issue comparison badges */}
+      <div className="issue-compare-row">
+        {[
+          { label: 'Security', before: result.original.securityCount, after: result.improved.securityCount, color: '#F87171' },
+          { label: 'Syntax',   before: result.original.syntaxCount,   after: result.improved.syntaxCount,   color: '#FBBF24' },
+          { label: 'Quality',  before: result.original.smellCount,    after: result.improved.smellCount,    color: '#64748B' },
+        ].map(row => {
+          const diff = row.after - row.before
+          return (
+            <div key={row.label} className="issue-compare-chip">
+              <span className="icc-label">{row.label}</span>
+              <span className="icc-val" style={{ color: row.color }}>{row.before}</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#334155" strokeWidth="2.5" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+              <span className="icc-val" style={{ color: diff < 0 ? '#34D399' : diff > 0 ? '#F87171' : '#334155' }}>{row.after}</span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Fixed code editor */}
+      <div className="fixed-code-section">
+        <div className="fixed-code-header">
+          <span className="section-label"><IconWand /> Fixed Code</span>
+          <button
+            className={`copy-report-btn ${codeCopied ? 'copied' : ''}`}
+            onClick={copyCode}
+          >
+            {codeCopied ? <><IconCheck /> Copied</> : <><IconCopy /> Copy code</>}
+          </button>
+        </div>
+        <div className="fixed-code-editor">
+          <CodeMirror
+            value={result.rewrittenCode}
+            theme={vscodeDark}
+            extensions={[getLangExtension(lang)]}
+            editable={false}
+            basicSetup={{
+              lineNumbers: true,
+              syntaxHighlighting: true,
+              highlightActiveLine: false,
+              highlightActiveLineGutter: false,
+              bracketMatching: true,
+              foldGutter: false,
+              autocompletion: false,
+            }}
+            className="cm-outer cm-readonly"
           />
+        </div>
+      </div>
+
+      {/* Original report */}
+      {result.original.suggestion && (
+        <div className="report-section">
+          <span className="section-label"><IconSparkle /> Original Report</span>
+          <div className="markdown-body" ref={mdRef} dangerouslySetInnerHTML={{ __html: renderMd(result.original.suggestion) }} />
+        </div>
+      )}
+
+      {/* Remaining issues after rewrite */}
+      {result.improved.issues.length > 0 && (
+        <div>
+          <span className="section-label" style={{ marginBottom: 8, display: 'block' }}>Remaining Issues</span>
+          <IssueList issues={result.improved.issues} />
         </div>
       )}
     </div>
@@ -475,17 +594,20 @@ function ResultsPanel({
 }
 
 export default function App() {
-  const [code, setCode]         = useState('')
-  const [lang, setLang]         = useState<LangId>('typescript')
-  const [loading, setLoading]   = useState(false)
-  const [result, setResult]     = useState<AnalysisResult | null>(null)
-  const [error, setError]       = useState<string | null>(null)
-  const [status, setStatus]     = useState<BackendStatus>('checking')
-  const [step, setStep]         = useState(0)
+  const [code, setCode]               = useState('')
+  const [lang, setLang]               = useState<LangId>('typescript')
+  const [loading, setLoading]         = useState(false)
+  const [loadingMode, setLoadingMode] = useState<'analyze' | 'rewrite'>('analyze')
+  const [result, setResult]           = useState<AnalysisResult | null>(null)
+  const [rewriteResult, setRewriteResult] = useState<RewriteResult | null>(null)
+  const [error, setError]             = useState<string | null>(null)
+  const [status, setStatus]           = useState<BackendStatus>('checking')
+  const [step, setStep]               = useState(0)
   const [reportCopied, setReportCopied] = useState(false)
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const activeLang = LANGUAGES.find(l => l.id === lang)!
+  const activeSteps = loadingMode === 'rewrite' ? REWRITE_STEPS : ANALYSIS_STEPS
 
   useEffect(() => {
     fetch('/api/agent/ping', { method: 'POST' })
@@ -496,9 +618,10 @@ export default function App() {
   useEffect(() => {
     if (!loading) { setStep(0); return }
     setStep(0)
-    const id = setInterval(() => setStep(s => Math.min(s + 1, ANALYSIS_STEPS.length - 1)), 2200)
+    const interval = loadingMode === 'rewrite' ? 1800 : 2200
+    const id = setInterval(() => setStep(s => Math.min(s + 1, activeSteps.length - 1)), interval)
     return () => clearInterval(id)
-  }, [loading])
+  }, [loading, loadingMode, activeSteps.length])
 
   const showError = useCallback((msg: string) => {
     setError(msg)
@@ -509,7 +632,9 @@ export default function App() {
   const analyze = useCallback(async () => {
     if (!code.trim() || loading) return
     setLoading(true)
+    setLoadingMode('analyze')
     setResult(null)
+    setRewriteResult(null)
     setError(null)
     try {
       const res = await fetch('/api/agent/analyze', {
@@ -522,6 +647,31 @@ export default function App() {
         throw new Error(body.error ?? `Server error ${res.status}`)
       }
       setResult(await res.json() as AnalysisResult)
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Unexpected error — is the backend running on :3000?')
+    } finally {
+      setLoading(false)
+    }
+  }, [code, lang, loading, showError])
+
+  const analyzeAndRewrite = useCallback(async () => {
+    if (!code.trim() || loading) return
+    setLoading(true)
+    setLoadingMode('rewrite')
+    setResult(null)
+    setRewriteResult(null)
+    setError(null)
+    try {
+      const res = await fetch('/api/agent/analyze-and-rewrite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, language: lang }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error ?? `Server error ${res.status}`)
+      }
+      setRewriteResult(await res.json() as RewriteResult)
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Unexpected error — is the backend running on :3000?')
     } finally {
@@ -544,8 +694,12 @@ export default function App() {
     setTimeout(() => setReportCopied(false), 2200)
   }, [result])
 
-  const lines   = code ? code.split('\n').length : 0
-  const kbSize  = new TextEncoder().encode(code).length / 1024
+  const activeResult = result ?? rewriteResult
+  const currentScore = result?.score ?? rewriteResult?.improved.score
+  const currentGrade = result?.grade ?? rewriteResult?.improved.grade
+
+  const lines  = code ? code.split('\n').length : 0
+  const kbSize = new TextEncoder().encode(code).length / 1024
 
   return (
     <div className="app">
@@ -579,7 +733,7 @@ export default function App() {
                 <select
                   className="lang-select"
                   value={lang}
-                  onChange={e => { setLang(e.target.value as LangId); setResult(null) }}
+                  onChange={e => { setLang(e.target.value as LangId); setResult(null); setRewriteResult(null) }}
                   aria-label="Select language"
                 >
                   {LANGUAGES.map(l => (
@@ -594,7 +748,7 @@ export default function App() {
                 <div className="editor-meta">
                   <span className="meta-pill">{lines} ln</span>
                   <span className="meta-pill">{kbSize.toFixed(1)} KB</span>
-                  <button className="clear-btn" onClick={() => { setCode(''); setResult(null) }} title="Clear editor">
+                  <button className="clear-btn" onClick={() => { setCode(''); setResult(null); setRewriteResult(null) }} title="Clear editor">
                     <IconX />
                   </button>
                 </div>
@@ -628,20 +782,36 @@ export default function App() {
 
           <div className="panel-footer">
             <button
-              className={`analyze-btn ${loading ? 'loading' : ''}`}
+              className={`analyze-btn ${loading && loadingMode === 'analyze' ? 'loading' : ''}`}
               onClick={() => void analyze()}
               disabled={loading || !code.trim()}
-              aria-busy={loading}
+              aria-busy={loading && loadingMode === 'analyze'}
+              title="Ctrl+Enter"
             >
               <span className="btn-shimmer" />
-              {loading
+              {loading && loadingMode === 'analyze'
                 ? <><IconLoader /><span>Analyzing…</span></>
                 : <><IconSparkle /><span>Analyze</span></>
               }
             </button>
-            {result && !loading && (
-              <span className="footer-score" style={{ color: (GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).color }}>
-                <strong>{result.score}</strong>/100 · {(GRADE_CONFIG[result.grade] ?? GRADE_CONFIG.F).label}
+
+            <button
+              className={`rewrite-btn ${loading && loadingMode === 'rewrite' ? 'loading' : ''}`}
+              onClick={() => void analyzeAndRewrite()}
+              disabled={loading || !code.trim()}
+              aria-busy={loading && loadingMode === 'rewrite'}
+              title="Analyze, rewrite, and verify"
+            >
+              <span className="btn-shimmer" />
+              {loading && loadingMode === 'rewrite'
+                ? <><IconLoader /><span>Rewriting…</span></>
+                : <><IconWand /><span>Analyze & Rewrite</span></>
+              }
+            </button>
+
+            {activeResult && !loading && currentScore !== undefined && currentGrade !== undefined && (
+              <span className="footer-score" style={{ color: (GRADE_CONFIG[currentGrade as keyof typeof GRADE_CONFIG] ?? GRADE_CONFIG.F).color }}>
+                <strong>{currentScore}</strong>/100 · {(GRADE_CONFIG[currentGrade as keyof typeof GRADE_CONFIG] ?? GRADE_CONFIG.F).label}
               </span>
             )}
           </div>
@@ -650,7 +820,9 @@ export default function App() {
         <section className="results-panel glass-card">
           <div className="panel-header">
             <div className="file-tab">
-              <span className="panel-title-text">Analysis Report</span>
+              <span className="panel-title-text">
+                {rewriteResult ? 'Rewrite Report' : 'Analysis Report'}
+              </span>
             </div>
             <div className="panel-header-right">
               {result && !loading && (
@@ -674,12 +846,25 @@ export default function App() {
                   </span>
                 </>
               )}
+              {rewriteResult && !loading && (
+                <span
+                  className="report-badge"
+                  style={{
+                    color: (GRADE_CONFIG[rewriteResult.improved.grade] ?? GRADE_CONFIG.F).color,
+                    borderColor: `${(GRADE_CONFIG[rewriteResult.improved.grade] ?? GRADE_CONFIG.F).color}28`,
+                    background: (GRADE_CONFIG[rewriteResult.improved.grade] ?? GRADE_CONFIG.F).bg,
+                  }}
+                >
+                  {rewriteResult.original.grade} → {rewriteResult.improved.grade}
+                </span>
+              )}
             </div>
           </div>
           <div className="results-body">
-            {loading   && <LoadingState step={step} />}
-            {!loading && !result && <EmptyState />}
-            {!loading && result  && <ResultsPanel result={result} langLabel={activeLang.label} />}
+            {loading     && <LoadingState steps={activeSteps} step={step} />}
+            {!loading && !result && !rewriteResult && <EmptyState />}
+            {!loading && result      && <ResultsPanel result={result} langLabel={activeLang.label} />}
+            {!loading && rewriteResult && <RewriteResultsPanel result={rewriteResult} lang={lang} langLabel={activeLang.label} />}
           </div>
         </section>
       </main>

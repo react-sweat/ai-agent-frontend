@@ -1110,3 +1110,189 @@ kbd {
 }
 
 .toast-close:hover { background: rgba(248,113,113,0.16); }
+
+/* ── Analyze & Rewrite button ─────────────────────────────────── */
+.rewrite-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border-radius: 9px;
+  border: 1px solid rgba(16,185,129,0.35);
+  background: linear-gradient(135deg, rgba(5,150,105,0.18) 0%, rgba(16,185,129,0.12) 100%);
+  color: #34D399;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s, box-shadow 0.18s, background 0.18s, border-color 0.18s;
+}
+
+.rewrite-btn:hover:not(:disabled) .btn-shimmer {
+  animation: shimmer-sweep 0.55s ease-in-out;
+}
+
+.rewrite-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, rgba(5,150,105,0.28) 0%, rgba(16,185,129,0.2) 100%);
+  border-color: rgba(52,211,153,0.5);
+  box-shadow: 0 6px 24px rgba(16,185,129,0.28), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.rewrite-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(16,185,129,0.15);
+}
+
+.rewrite-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.rewrite-btn.loading {
+  animation: pulse-glow-green 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse-glow-green {
+  0%, 100% { box-shadow: 0 4px 16px rgba(16,185,129,0.2); }
+  50%       { box-shadow: 0 4px 28px rgba(52,211,153,0.45); }
+}
+
+/* ── Score comparison card ────────────────────────────────────── */
+.score-compare-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 20px;
+  background: rgba(255,255,255,0.018);
+  border: 1px solid rgba(255,255,255,0.055);
+  border-radius: 12px;
+}
+
+.score-compare-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.score-compare-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.score-compare-grade {
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -1px;
+}
+
+.score-compare-sub {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--mono);
+}
+
+.score-compare-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.score-delta {
+  font-size: 15px;
+  font-weight: 800;
+  font-family: var(--mono);
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid;
+}
+
+.score-delta.positive {
+  color: #34D399;
+  background: rgba(52,211,153,0.08);
+  border-color: rgba(52,211,153,0.25);
+}
+
+.score-delta.negative {
+  color: #F87171;
+  background: rgba(248,113,113,0.08);
+  border-color: rgba(248,113,113,0.25);
+}
+
+/* ── Issue comparison row ─────────────────────────────────────── */
+.issue-compare-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.issue-compare-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  background: rgba(255,255,255,0.018);
+  border: 1px solid rgba(255,255,255,0.055);
+  border-radius: 8px;
+  font-size: 11.5px;
+  flex: 1;
+  min-width: 100px;
+  justify-content: center;
+}
+
+.icc-label {
+  color: #334155;
+  font-weight: 600;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.icc-val {
+  font-weight: 700;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* ── Fixed code section ───────────────────────────────────────── */
+.fixed-code-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fixed-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fixed-code-editor {
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  overflow: hidden;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.fixed-code-editor::-webkit-scrollbar { width: 5px; height: 5px; }
+.fixed-code-editor::-webkit-scrollbar-track { background: transparent; }
+.fixed-code-editor::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+
+.cm-readonly .cm-editor {
+  cursor: default;
+}
+
+.cm-readonly .cm-cursor { display: none !important; }
