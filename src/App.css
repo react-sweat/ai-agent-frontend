@@ -1296,3 +1296,298 @@ kbd {
 }
 
 .cm-readonly .cm-cursor { display: none !important; }
+
+/* ── Header auth controls ──────────────────────────────────────── */
+.user-name-pill {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #64748B;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 20px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-icon-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 500;
+  font-family: inherit;
+  color: #475569;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 7px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.header-icon-btn:hover {
+  color: #818CF8;
+  background: rgba(129,140,248,0.07);
+  border-color: rgba(129,140,248,0.2);
+}
+
+.header-icon-btn.danger:hover {
+  color: #F87171;
+  background: rgba(248,113,113,0.07);
+  border-color: rgba(248,113,113,0.2);
+}
+
+/* ── History drawer ────────────────────────────────────────────── */
+.hist-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 200;
+  animation: fade-in 0.2s ease-out both;
+}
+
+.hist-drawer {
+  position: absolute;
+  top: 0; right: 0;
+  width: 420px;
+  max-width: 100vw;
+  height: 100%;
+  background: rgba(8,8,24,0.97);
+  border-left: 1px solid rgba(255,255,255,0.07);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 48px rgba(0,0,0,0.6);
+  animation: drawer-slide-in 0.28s cubic-bezier(0.34,1.2,0.64,1) both;
+}
+
+@keyframes drawer-slide-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+.hist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  height: 52px;
+  border-bottom: 1px solid rgba(255,255,255,0.055);
+  flex-shrink: 0;
+}
+
+.hist-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #64748B;
+  letter-spacing: 0.2px;
+}
+
+.hist-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,0.07);
+  background: rgba(255,255,255,0.03);
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.hist-close:hover { color: #F87171; background: rgba(248,113,113,0.08); border-color: rgba(248,113,113,0.2); }
+
+.hist-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hist-body::-webkit-scrollbar { width: 4px; }
+.hist-body::-webkit-scrollbar-track { background: transparent; }
+.hist-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 2px; }
+
+.hist-loading,
+.hist-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  min-height: 200px;
+  color: #334155;
+  font-size: 13px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ── History entry ─────────────────────────────────────────────── */
+.hist-entry {
+  border: 1px solid rgba(255,255,255,0.055);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.015);
+  overflow: hidden;
+  transition: border-color 0.15s, background 0.15s;
+  cursor: pointer;
+}
+
+.hist-entry:hover,
+.hist-entry.open {
+  border-color: rgba(129,140,248,0.18);
+  background: rgba(79,70,229,0.04);
+}
+
+.hist-entry-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.hist-score-dot {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.03);
+  border: 2px solid transparent; /* color set via inline style borderColor */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.hist-entry-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hist-entry-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hist-lang-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.hist-lang {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #94A3B8;
+}
+
+.hist-type-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+  letter-spacing: 0.2px;
+}
+
+.hist-type-badge.analyze {
+  color: #818CF8;
+  background: rgba(99,102,241,0.08);
+  border-color: rgba(99,102,241,0.22);
+}
+
+.hist-type-badge.rewrite {
+  color: #34D399;
+  background: rgba(52,211,153,0.08);
+  border-color: rgba(52,211,153,0.22);
+}
+
+.hist-entry-bottom {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.hist-grade { font-weight: 700; }
+.hist-sep   { color: #1E293B; }
+.hist-issues,
+.hist-time  { color: #334155; }
+
+.hist-delta-pill {
+  font-size: 11px;
+  font-weight: 800;
+  font-family: var(--mono);
+  padding: 2px 7px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  flex-shrink: 0;
+}
+
+.hist-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+
+.hist-chevron.open { transform: rotate(180deg); }
+
+/* ── Expanded preview ──────────────────────────────────────────── */
+.hist-preview {
+  border-top: 1px solid rgba(255,255,255,0.05);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hist-code {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 7px;
+  padding: 9px 11px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #475569;
+  white-space: pre;
+  overflow-x: auto;
+  margin: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  line-height: 1.55;
+}
+
+.hist-chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.hist-chip {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid;
+}
+
+.hist-chip.sec { color: #F87171; background: rgba(248,113,113,0.06); border-color: rgba(248,113,113,0.18); }
+.hist-chip.syn { color: #FBBF24; background: rgba(251,191,36,0.06); border-color: rgba(251,191,36,0.18); }
+.hist-chip.qua { color: #64748B; background: rgba(100,116,139,0.06); border-color: rgba(100,116,139,0.18); }
+.hist-chip.rw  { color: #34D399; background: rgba(52,211,153,0.06); border-color: rgba(52,211,153,0.18); }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useAuth } from './context/AuthContext'
 import CodeMirror from '@uiw/react-codemirror'
 import { vscodeDark } from '@uiw/codemirror-theme-vscode'
 import { javascript } from '@codemirror/lang-javascript'
@@ -39,6 +40,22 @@ interface RewriteResult {
   original: AnalysisResult
   rewrittenCode: string
   improved: ImprovementSummary
+}
+
+interface HistoryEntry {
+  id:            string
+  language:      string
+  score:         number
+  grade:         string
+  issue_count:   number
+  syntax_count:  number
+  smell_count:   number
+  security_count:number
+  analysis_type: 'analyze' | 'rewrite'
+  improved_score: number | null
+  improved_grade: string | null
+  code_preview:  string
+  created_at:    string
 }
 
 type BackendStatus = 'checking' | 'online' | 'offline'
@@ -198,6 +215,22 @@ function IconWand() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8L19 13M17.8 6.2L19 5M3 21l9-9M12.2 6.2L11 5" />
+    </svg>
+  )
+}
+
+function IconHistory() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-5.23"/><line x1="12" y1="7" x2="12" y2="12"/><polyline points="12 12 15 14"/>
+    </svg>
+  )
+}
+
+function IconLogout() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
     </svg>
   )
 }
@@ -593,7 +626,132 @@ function RewriteResultsPanel({ result, lang }: { result: RewriteResult; lang: La
   )
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const m = Math.floor(diff / 60_000)
+  if (m < 1)   return 'just now'
+  if (m < 60)  return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24)  return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
+function HistoryModal({
+  entries, loading, onClose,
+}: {
+  entries: HistoryEntry[]
+  loading: boolean
+  onClose: () => void
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  return (
+    <div className="hist-overlay" onClick={onClose}>
+      <div className="hist-drawer" onClick={e => e.stopPropagation()}>
+
+        <div className="hist-header">
+          <span className="hist-title"><IconHistory /> Analysis History</span>
+          <button className="hist-close" onClick={onClose} aria-label="Close"><IconX /></button>
+        </div>
+
+        <div className="hist-body">
+          {loading && (
+            <div className="hist-loading">
+              <IconLoader />
+              <span>Loading history…</span>
+            </div>
+          )}
+
+          {!loading && entries.length === 0 && (
+            <div className="hist-empty">
+              <IconSparkle />
+              <p>No analyses yet.<br />Run an analysis to see your history here.</p>
+            </div>
+          )}
+
+          {!loading && entries.map(entry => {
+            const isOpen = expanded === entry.id
+            const displayScore = entry.analysis_type === 'rewrite' && entry.improved_score !== null
+              ? entry.improved_score
+              : entry.score
+            const displayGrade = entry.analysis_type === 'rewrite' && entry.improved_grade
+              ? entry.improved_grade
+              : entry.grade
+            const displayCfg = GRADE_CONFIG[displayGrade as keyof typeof GRADE_CONFIG] ?? GRADE_CONFIG.F
+            const langDef = LANGUAGES.find(l => l.id === entry.language)
+
+            return (
+              <div
+                key={entry.id}
+                className={`hist-entry ${isOpen ? 'open' : ''}`}
+                onClick={() => setExpanded(isOpen ? null : entry.id)}
+              >
+                <div className="hist-entry-main">
+                  {/* Score mini-ring */}
+                  <div className="hist-score-dot" style={{ borderColor: displayCfg.color, boxShadow: `0 0 8px ${displayCfg.glow}` }}>
+                    <span style={{ color: displayCfg.color, fontSize: 10, fontWeight: 800, fontFamily: 'var(--mono)' }}>{displayScore}</span>
+                  </div>
+
+                  <div className="hist-entry-info">
+                    <div className="hist-entry-top">
+                      <span className="hist-lang-dot" style={{ background: langDef?.dot ?? '#64748B' }} />
+                      <span className="hist-lang">{langDef?.label ?? entry.language}</span>
+                      <span className={`hist-type-badge ${entry.analysis_type}`}>
+                        {entry.analysis_type === 'rewrite' ? '⚡ Rewrite' : '🔍 Analyze'}
+                      </span>
+                    </div>
+                    <div className="hist-entry-bottom">
+                      <span className="hist-grade" style={{ color: displayCfg.color }}>Grade {displayGrade}</span>
+                      <span className="hist-sep">·</span>
+                      <span className="hist-issues">{entry.issue_count} issue{entry.issue_count !== 1 ? 's' : ''}</span>
+                      <span className="hist-sep">·</span>
+                      <span className="hist-time">{timeAgo(entry.created_at)}</span>
+                    </div>
+                  </div>
+
+                  {entry.analysis_type === 'rewrite' && entry.improved_score !== null && (
+                    <div className="hist-delta-pill" style={{ color: (entry.improved_score - entry.score) >= 0 ? '#34D399' : '#F87171' }}>
+                      {(entry.improved_score - entry.score) >= 0 ? '+' : ''}{entry.improved_score - entry.score}
+                    </div>
+                  )}
+
+                  <svg
+                    className={`hist-chevron ${isOpen ? 'open' : ''}`}
+                    width="10" height="10" viewBox="0 0 24 24" fill="none"
+                    stroke="#334155" strokeWidth="2.5" strokeLinecap="round"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </div>
+
+                {isOpen && (
+                  <div className="hist-preview" onClick={e => e.stopPropagation()}>
+                    <pre className="hist-code">{entry.code_preview}{entry.code_preview.length >= 300 ? '\n…' : ''}</pre>
+                    <div className="hist-chips">
+                      <span className="hist-chip sec">🛡 {entry.security_count} security</span>
+                      <span className="hist-chip syn">⚠ {entry.syntax_count} syntax</span>
+                      <span className="hist-chip qua">🔎 {entry.smell_count} quality</span>
+                      {entry.analysis_type === 'rewrite' && entry.improved_grade && (
+                        <span className="hist-chip rw">
+                          {entry.grade} → {entry.improved_grade}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
+  const { user, token, logout } = useAuth()
+
   const [code, setCode]               = useState('')
   const [lang, setLang]               = useState<LangId>('typescript')
   const [loading, setLoading]         = useState(false)
@@ -605,6 +763,32 @@ export default function App() {
   const [step, setStep]               = useState(0)
   const [reportCopied, setReportCopied] = useState(false)
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // History panel state
+  const [showHistory,    setShowHistory]    = useState(false)
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  const fetchHistory = useCallback(async () => {
+    if (!token) return
+    setHistoryLoading(true)
+    try {
+      const res = await fetch('/api/history', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = await res.json() as { history: HistoryEntry[] }
+        setHistoryEntries(data.history)
+      }
+    } catch { /* silent */ } finally {
+      setHistoryLoading(false)
+    }
+  }, [token])
+
+  const openHistory = useCallback(() => {
+    setShowHistory(true)
+    void fetchHistory()
+  }, [fetchHistory])
 
   const activeLang = LANGUAGES.find(l => l.id === lang)!
   const activeSteps = loadingMode === 'rewrite' ? REWRITE_STEPS : ANALYSIS_STEPS
@@ -637,9 +821,11 @@ export default function App() {
     setRewriteResult(null)
     setError(null)
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
       const res = await fetch('/api/agent/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ code, language: lang }),
       })
       if (!res.ok) {
@@ -652,7 +838,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [code, lang, loading, showError])
+  }, [code, lang, loading, token, showError])
 
   const analyzeAndRewrite = useCallback(async () => {
     if (!code.trim() || loading) return
@@ -662,9 +848,11 @@ export default function App() {
     setRewriteResult(null)
     setError(null)
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
       const res = await fetch('/api/agent/analyze-and-rewrite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ code, language: lang }),
       })
       if (!res.ok) {
@@ -677,7 +865,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [code, lang, loading, showError])
+  }, [code, lang, loading, token, showError])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -714,12 +902,32 @@ export default function App() {
           </span>
         </div>
         <div className="header-right">
+          {user && (
+            <>
+              <span className="user-name-pill">{user.name}</span>
+              <button className="header-icon-btn" onClick={openHistory} title="Analysis history">
+                <IconHistory />
+                <span>History</span>
+              </button>
+              <button className="header-icon-btn danger" onClick={logout} title="Sign out">
+                <IconLogout />
+              </button>
+            </>
+          )}
           <span className="kbd-hint">
             <kbd>Ctrl</kbd><kbd>↵</kbd>
             <span className="kbd-label">Analyze</span>
           </span>
         </div>
       </header>
+
+      {showHistory && (
+        <HistoryModal
+          entries={historyEntries}
+          loading={historyLoading}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
 
       <main className="main-grid">
         <section className="editor-panel glass-card">
