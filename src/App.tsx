@@ -545,7 +545,22 @@ function FixVerifyPanel({ fix, fixLoading, fixStep }: { fix: FixResult | null; f
   )
 }
 
+function redirectToChallenge() {
+  window.location.href = '/api/auth/challenge'
+}
+
+async function logout() {
+  // Fetch /logout with same-origin credentials — server returns 401,
+  // which causes the browser to discard its cached Basic Auth credentials.
+  // Then navigate to /challenge so the browser shows the login dialog again.
+  try { await fetch('/api/auth/logout', { credentials: 'same-origin' }) } catch { /* ignore */ }
+  window.location.href = '/api/auth/challenge'
+}
+
 export default function App() {
+  const [username, setUsername] = useState<string | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
+
   const [code, setCode]         = useState('')
   const [lang, setLang]         = useState<LangId>('typescript')
   const [loading, setLoading]   = useState(false)
@@ -559,13 +574,28 @@ export default function App() {
   const [fixStep, setFixStep]         = useState(0)
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const activeLang = LANGUAGES.find(l => l.id === lang)!
+  // ── wszystkie hooki MUSZĄ być przed jakimkolwiek warunkowym return ──
 
   useEffect(() => {
-    fetch('/api/agent/ping', { method: 'POST' })
+    fetch('/api/auth/login', { method: 'POST', credentials: 'same-origin' })
+      .then(async r => {
+        if (r.ok) {
+          const body = await r.json() as { user: { username: string } }
+          setUsername(body.user.username)
+        } else {
+          redirectToChallenge()
+        }
+      })
+      .catch(() => redirectToChallenge())
+      .finally(() => setAuthChecked(true))
+  }, [])
+
+  useEffect(() => {
+    if (!username) return
+    fetch('/api/agent/ping', { method: 'POST', credentials: 'same-origin' })
       .then(r => setStatus(r.ok ? 'online' : 'offline'))
       .catch(() => setStatus('offline'))
-  }, [])
+  }, [username])
 
   useEffect(() => {
     if (!loading) { setStep(0); return }
@@ -596,8 +626,10 @@ export default function App() {
       const res = await fetch('/api/agent/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ code, language: lang }),
       })
+      if (res.status === 401) { redirectToChallenge(); return }
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string }
         throw new Error(body.error ?? `Server error ${res.status}`)
@@ -626,8 +658,10 @@ export default function App() {
       const res = await fetch('/api/agent/fix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ code, language: lang }),
       })
+      if (res.status === 401) { redirectToChallenge(); return }
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string }
         throw new Error(body.error ?? `Server error ${res.status}`)
@@ -647,6 +681,11 @@ export default function App() {
     setTimeout(() => setReportCopied(false), 2200)
   }, [result])
 
+  // ── warunkowe return dopiero po wszystkich hookach ──
+  if (!authChecked) return null
+  if (!username) return null
+
+  const activeLang = LANGUAGES.find(l => l.id === lang)!
   const lines   = code ? code.split('\n').length : 0
   const kbSize  = new TextEncoder().encode(code).length / 1024
 
@@ -667,6 +706,10 @@ export default function App() {
             <kbd>Ctrl</kbd><kbd>↵</kbd>
             <span className="kbd-label">Analyze</span>
           </span>
+          <div className="header-user">
+            <span className="header-username">{username}</span>
+            <button className="logout-btn" onClick={() => void logout()}>Sign out</button>
+          </div>
         </div>
       </header>
 
